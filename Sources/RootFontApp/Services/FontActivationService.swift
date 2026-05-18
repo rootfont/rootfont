@@ -54,7 +54,7 @@ struct FontActivationService: FontActivationServiceProtocol, @unchecked Sendable
         self.userInstallDirectoryURL = userInstallDirectoryURL ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Fonts/RootFont", isDirectory: true)
         self.availableFontURLsProvider = availableFontURLsProvider ?? {
-            (CTFontManagerCopyAvailableFontURLs() as? [URL]) ?? []
+            FontURLIndex.shared.urls
         }
         self.registerAction = registerAction ?? { urls, scope in
             try Self.defaultRegister(urls: urls, scope: scope)

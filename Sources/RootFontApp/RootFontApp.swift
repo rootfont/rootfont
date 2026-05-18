@@ -4,19 +4,25 @@ import SwiftUI
 @main
 struct RootFontApp: App {
     private static var aboutWindow: NSWindow?
-    private let activationService = FontActivationService()
+    private let activationService: FontActivationService
+    @StateObject private var viewModel: FontBrowserViewModel
 
     init() {
+        let preferences = PreferencesStore()
+        let activation = FontActivationService()
+        self.activationService = activation
+        _viewModel = StateObject(
+            wrappedValue: FontBrowserViewModel(
+                catalogService: FontCatalogService(),
+                preferencesStore: preferences,
+                activationService: activation
+            )
+        )
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        AppAppearanceApplier.applyImmediately(PreferencesStore().appearanceMode)
-        try? FontActivationService().reconcile()
+        AppAppearanceApplier.applyImmediately(preferences.appearanceMode)
+        try? activation.reconcile()
     }
-
-    @StateObject private var viewModel = FontBrowserViewModel(
-        catalogService: FontCatalogService(),
-        preferencesStore: PreferencesStore()
-    )
 
     var body: some Scene {
         WindowGroup(AppMetadata.appName) {
@@ -50,6 +56,27 @@ struct RootFontApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(replacing: .appSettings) { }
             CommandGroup(replacing: .systemServices) { }
+            CommandMenu(viewModel.tr(.personal)) {
+                Button(viewModel.tr(.favoriteAdd)) {
+                    if let selected = viewModel.selectedFont {
+                        viewModel.toggleFavorite(selected)
+                    }
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .disabled(viewModel.selectedFont == nil)
+                Button(viewModel.tr(.jumpFavorites)) {
+                    viewModel.jumpToFavorites()
+                }
+                .keyboardShortcut("2", modifiers: [.command, .option])
+                Button(viewModel.tr(.jumpRecents)) {
+                    viewModel.jumpToRecents()
+                }
+                .keyboardShortcut("3", modifiers: [.command, .option])
+                Button(viewModel.tr(.jumpAll)) {
+                    viewModel.jumpToAllFonts()
+                }
+                .keyboardShortcut("1", modifiers: [.command, .option])
+            }
             CommandGroup(replacing: .appInfo) {
                 Button("About \(AppMetadata.appName)") {
                     showAboutPanel()

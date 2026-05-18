@@ -54,54 +54,19 @@ final class FontBrowserViewModel: ObservableObject {
 
         var id: Self { self }
 
-        func title(language: AppLanguage) -> String {
+        var l10nKey: L10nKey {
             switch self {
-            case .mixed:
-                switch language {
-                case .simplifiedChinese, .traditionalChinese: return "混合"
-                case .japanese: return "混合"
-                case .korean: return "혼합"
-                case .english: return "Mixed"
-                }
-            case .english:
-                switch language {
-                case .simplifiedChinese, .traditionalChinese: return "英文"
-                case .japanese: return "英語"
-                case .korean: return "영문"
-                case .english: return "English"
-                }
-            case .chinese:
-                switch language {
-                case .simplifiedChinese, .traditionalChinese: return "中文"
-                case .japanese: return "中国語"
-                case .korean: return "중문"
-                case .english: return "Chinese"
-                }
-            case .japanese:
-                switch language {
-                case .simplifiedChinese: return "日语"
-                case .traditionalChinese: return "日語"
-                case .japanese: return "日本語"
-                case .korean: return "일본어"
-                case .english: return "Japanese"
-                }
-            case .korean:
-                switch language {
-                case .simplifiedChinese: return "韩语"
-                case .traditionalChinese: return "韓語"
-                case .japanese: return "韓国語"
-                case .korean: return "한국어"
-                case .english: return "Korean"
-                }
-            case .numeric:
-                switch language {
-                case .traditionalChinese: return "數字"
-                case .simplifiedChinese: return "数字"
-                case .japanese: return "数字"
-                case .korean: return "숫자"
-                case .english: return "Numeric"
-                }
+            case .mixed: return .previewPresetMixed
+            case .english: return .previewPresetEnglish
+            case .chinese: return .previewPresetChinese
+            case .japanese: return .previewPresetJapanese
+            case .korean: return .previewPresetKorean
+            case .numeric: return .previewPresetNumeric
             }
+        }
+
+        func title(language: AppLanguage) -> String {
+            L10n.tr(l10nKey, language: language)
         }
 
         var text: String {
@@ -125,7 +90,7 @@ final class FontBrowserViewModel: ObservableObject {
     private let catalogService: FontCatalogServiceProtocol
     private let fontImportService: FontImportServiceProtocol
     private let preferencesStore: PreferencesStoreProtocol
-    private let activationService: FontActivationServiceProtocol
+    let activationService: FontActivationServiceProtocol
     private let maxRecents = 30
     private let maxCoverageCacheEntries = 2048
     private let backgroundFilterThreshold = 400
@@ -152,6 +117,7 @@ final class FontBrowserViewModel: ObservableObject {
     @Published var previewText: String
     @Published var previewSize: Double
     @Published private(set) var isLoading = false
+    @Published private(set) var loadProgress: Double?
     @Published private(set) var loadErrorMessage: String?
     @Published private(set) var language: AppLanguage
     @Published private(set) var appearanceMode: AppAppearanceMode
@@ -338,14 +304,27 @@ final class FontBrowserViewModel: ObservableObject {
 
     func load() {
         guard !isLoading else { return }
+        FontURLIndex.shared.invalidate()
         isLoading = true
+        loadProgress = 0
         loadErrorMessage = nil
         let catalogService = self.catalogService
         Task.detached(priority: .userInitiated) { [weak self] in
             let loadedFonts: [FontItem]?
             let loadFailed: Bool
             do {
-                loadedFonts = try catalogService.loadFonts()
+                loadedFonts = try catalogService.loadFonts(
+                    onPartial: { partial in
+                        Task { @MainActor in
+                            self?.applyPartialLoadResult(fonts: partial)
+                        }
+                    },
+                    reportProgress: { progress in
+                        Task { @MainActor in
+                            self?.loadProgress = progress
+                        }
+                    }
+                )
                 loadFailed = false
             } catch {
                 loadedFonts = nil
@@ -355,6 +334,16 @@ final class FontBrowserViewModel: ObservableObject {
             await MainActor.run {
                 self?.applyLoadResult(fonts: loadedFonts, failed: loadFailed)
             }
+        }
+    }
+
+    private func applyPartialLoadResult(fonts: [FontItem]) {
+        allFonts = fonts
+        rebuildSearchIndex()
+        clearCoverageCache()
+        applyFilters()
+        if selectedFont == nil {
+            selectedFont = filteredFonts.first
         }
     }
 
@@ -377,6 +366,7 @@ final class FontBrowserViewModel: ObservableObject {
             }
         }
         isLoading = false
+        loadProgress = nil
     }
 
     var selectedFontVisible: Bool {
@@ -510,6 +500,11 @@ final class FontBrowserViewModel: ObservableObject {
 
     func applyPreviewPreset(_ preset: PreviewPreset) {
         updatePreviewText(preset.text)
+    }
+
+    func refreshManagedFontState() {
+        managedFontIDs = activationService.managedFontIDs()
+        applyFilters()
     }
 
     func applyFilters() {

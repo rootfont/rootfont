@@ -10,10 +10,15 @@ struct MockCatalogService: FontCatalogServiceProtocol {
         self.error = error
     }
 
-    func loadFonts() throws -> [FontItem] {
+    func loadFonts(
+        onPartial: (@Sendable ([FontItem]) -> Void)?,
+        reportProgress: (@Sendable (Double) -> Void)?
+    ) throws -> [FontItem] {
         if let error {
             throw error
         }
+        onPartial?(fonts)
+        reportProgress?(1.0)
         return fonts
     }
 }

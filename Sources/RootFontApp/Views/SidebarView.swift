@@ -84,6 +84,8 @@ struct SidebarView: View {
                         text: $coverageInput
                     )
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel(viewModel.tr(.glyphCoverage))
+                    .accessibilityHint(viewModel.tr(.glyphCoverageDescription))
 
                     Text(viewModel.tr(.glyphCoverageDescription))
                         .font(.caption2)
@@ -244,5 +246,7 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(viewModel.workspaceModule == module ? .isSelected : [])
     }
 }

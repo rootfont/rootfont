@@ -3,15 +3,9 @@ import CoreText
 import SwiftUI
 
 struct FontPreviewView: View {
-    private enum PreviewSurface: String, CaseIterable, Identifiable {
-        case sample
-        case code
-        var id: Self { self }
-    }
-
     @ObservedObject var viewModel: FontBrowserViewModel
     @State private var previewPreset: FontBrowserViewModel.PreviewPreset = .mixed
-    @State private var previewSurface: PreviewSurface = .sample
+    @State private var previewSurface: FontPreviewSurface = .sample
     @State private var snippetStrategy: SnippetStrategy = .semantic
     @State private var codeLanguage: MiniTokenizer.Language = .swift
     @State private var codeSnippet: String = SnippetCatalog.snippet(language: .swift, strategy: .semantic)
@@ -31,25 +25,36 @@ struct FontPreviewView: View {
     @State private var fontBookPathHint: String?
     @State private var showInstallConfirm = false
 
-    /// Texts under this length keep the ZWSP soft-wrap treatment.
-    /// Larger inputs fall back to the native layout engine because the
-    /// per-character joined string grows rapidly (O(n) strings, extra
-    /// allocations) and Text layout slows down noticeably.
-    private let softWrapCharacterLimit = 400
-    /// Any preview text longer than this is truncated with a visible
-    /// hint so the preview area stays responsive.
-    private let previewTextLengthLimit = 2000
     private let miniTokenizer = MiniTokenizer()
+    private var factorLabels: FontPreviewFactorLabels {
+        FontPreviewFactorLabels(tr: viewModel.tr)
+    }
     private let featureBinder: OpenTypeFeatureBinding = OpenTypeFeatureBinder()
     private let configExporter = EditorConfigExporter()
-    private let activationService: FontActivationServiceProtocol = FontActivationService()
+    private var activationService: FontActivationServiceProtocol {
+        viewModel.activationService
+    }
 
     var body: some View {
         Group {
             if let selected = viewModel.selectedFont {
                 ScrollView(.vertical, showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 16) {
-                        headerSection(for: selected)
+                        FontPreviewHeaderSection(
+                            viewModel: viewModel,
+                            selected: selected,
+                            activationService: activationService,
+                            showCopyToast: $showCopyToast,
+                            fontBookMessage: $fontBookMessage,
+                            fontBookPathHint: $fontBookPathHint,
+                            activationMessage: $activationMessage,
+                            activationConflictPath: $activationConflictPath,
+                            showInstallConfirm: $showInstallConfirm,
+                            editorTitle: editorTitle,
+                            onCopyEditorConfig: copyEditorConfig,
+                            onOpenInFontBook: openInFontBook,
+                            onPerformActivation: performActivation
+                        )
                         previewSurfaceSection
                         if previewSurface == .sample {
                             quickSampleSection
@@ -65,11 +70,22 @@ struct FontPreviewView: View {
                         featureToggleSection(for: selected)
                         if selected.programming?.isMonospaced == true,
                            let score = selected.programmingScore {
-                            if shouldShowWhyNotHint(score: score) {
-                                whyNotHint(score: score)
-                            }
-                            compareSection(baseline: selected, baselineScore: score)
-                            scoreBreakdownSection(score: score)
+                            FontPreviewProgrammingPanel(
+                                viewModel: viewModel,
+                                baseline: selected,
+                                baselineScore: score,
+                                factorLabels: factorLabels,
+                                previewSurface: $previewSurface,
+                                showScoreBreakdown: $showScoreBreakdown,
+                                activeWhyFactor: $activeWhyFactor,
+                                compareFontID: $compareFontID,
+                                snippetStrategy: $snippetStrategy,
+                                codeLanguage: $codeLanguage,
+                                codeSnippet: codeSnippet,
+                                highlightedCode: highlightedCode,
+                                previewFont: previewFont,
+                                codeLanguageTitle: codeLanguageTitle
+                            )
                         }
                         if previewSurface == .sample {
                             previewBlocksSection(for: selected)
@@ -145,119 +161,6 @@ struct FontPreviewView: View {
         }
     }
 
-    @ViewBuilder
-    private func headerSection(for selected: FontItem) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(selected.familyName(for: viewModel.language))
-                .font(.title2).bold()
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text(selected.displayName(for: viewModel.language))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            FlowLayout(hSpacing: 10, vSpacing: 4) {
-                Text("\(viewModel.tr(.sourcePrefix))\(viewModel.sourceLabel(for: selected))")
-                    .lineLimit(1)
-                Text("\(viewModel.tr(.stylePrefix))\(viewModel.styleLabel(for: selected))")
-                    .lineLimit(1)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
-            HStack(spacing: 10) {
-                Button(viewModel.tr(.copyFontName)) {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(selected.postScriptName, forType: .string)
-                }
-                .buttonStyle(.link)
-                .fixedSize()
-                Menu(viewModel.tr(.copyEditorConfig)) {
-                    ForEach(EditorTarget.allCases) { target in
-                        Button(editorTitle(target)) {
-                            copyEditorConfig(target: target, postScriptName: selected.postScriptName)
-                        }
-                    }
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                Text(selected.postScriptName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button(viewModel.tr(.openInFontBook)) {
-                    openInFontBook(for: selected)
-                }
-                .buttonStyle(.link)
-                .fixedSize()
-            }
-            if showCopyToast {
-                Text(viewModel.tr(.copiedToClipboard))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .transition(.opacity)
-            }
-            if let fontBookMessage {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(fontBookMessage)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    if let fontBookPathHint {
-                        Text("\(viewModel.tr(.fontPathPrefix)): \(fontBookPathHint)")
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-            }
-            if selected.source == .user {
-                HStack(spacing: 8) {
-                    Button(viewModel.tr(.activateForSession)) {
-                        performActivation {
-                            try activationService.activateForProcess(fontID: selected.postScriptName)
-                        }
-                    }
-                    .controlSize(.small)
-                    Button(viewModel.tr(.installForAllApps)) {
-                        showInstallConfirm = true
-                    }
-                    .controlSize(.small)
-                    if activationService.isManaged(fontID: selected.postScriptName) {
-                        Button(viewModel.tr(.uninstallManagedFont)) {
-                            performActivation {
-                                try activationService.uninstall(fontID: selected.postScriptName)
-                            }
-                        }
-                        .controlSize(.small)
-                    }
-                }
-                if let activationMessage {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(activationMessage)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        if let activationConflictPath {
-                            Text("\(viewModel.tr(.activationConflictPrefix)): \(activationConflictPath)")
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
-                Button(viewModel.tr(.openManagedFontsFolder)) {
-                    NSWorkspace.shared.open(activationService.managedFontsDirectoryURL())
-                }
-                .controlSize(.small)
-            }
-        }
-    }
-
     private var quickSampleSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(viewModel.tr(.quickSample))
@@ -289,8 +192,8 @@ struct FontPreviewView: View {
 
     private var previewSurfaceSection: some View {
         Picker(viewModel.tr(.previewMode), selection: $previewSurface) {
-            Text(viewModel.tr(.previewModeSample)).tag(PreviewSurface.sample)
-            Text(viewModel.tr(.previewModeCode)).tag(PreviewSurface.code)
+            Text(viewModel.tr(.previewModeSample)).tag(FontPreviewSurface.sample)
+            Text(viewModel.tr(.previewModeCode)).tag(FontPreviewSurface.code)
         }
         .pickerStyle(.segmented)
     }
@@ -414,277 +317,6 @@ struct FontPreviewView: View {
         }
     }
 
-    private func scoreBreakdownSection(score: ProgrammingScore) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            DisclosureGroup(isExpanded: $showScoreBreakdown) {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(score.breakdown, id: \.factor) { item in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 8) {
-                                Text(factorTitle(item.factor))
-                                    .font(.caption.weight(.semibold))
-                                Spacer(minLength: 8)
-                                Button(whyButtonTitle()) {
-                                    activeWhyFactor = item.factor
-                                }
-                                .buttonStyle(.plain)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.tint)
-                                .popover(isPresented: Binding(
-                                    get: { activeWhyFactor == item.factor },
-                                    set: { showing in
-                                        if !showing, activeWhyFactor == item.factor {
-                                            activeWhyFactor = nil
-                                        }
-                                    }
-                                ), arrowEdge: .bottom) {
-                                    whyPopover(for: item.factor)
-                                }
-                                Text("\(Int(round(item.weightedValue)))/\(Int(round(item.maxWeight)))")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
-                            ProgressView(value: item.weightedValue, total: item.maxWeight)
-                                .controlSize(.small)
-                            Text(factorHint(item.factor))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .padding(.top, 4)
-            } label: {
-                HStack(spacing: 8) {
-                    Text(scoreBreakdownTitle())
-                        .font(.subheadline.weight(.semibold))
-                    gradeBadge(score.grade)
-                    Text("\(score.total)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private func compareSection(baseline: FontItem, baselineScore: ProgrammingScore) -> some View {
-        let candidates = compareCandidates(for: baseline)
-        if !candidates.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                compareSnippetControls
-                Picker(compareTitle(), selection: Binding(
-                    get: { compareFontID ?? "" },
-                    set: { compareFontID = $0.isEmpty ? nil : $0 }
-                )) {
-                    Text(compareNoneOption()).tag("")
-                    ForEach(candidates) { item in
-                        Text(item.familyName(for: viewModel.language)).tag(item.id)
-                    }
-                }
-                .pickerStyle(.menu)
-
-                if let compare = selectedCompareFont(from: candidates),
-                   let compareScore = compare.programmingScore {
-                    FontCompareView(
-                        baseline: baseline,
-                        candidate: compare,
-                        baselineScore: baselineScore,
-                        candidateScore: compareScore,
-                        codeSnippet: highlightedCode(for: codeSnippet),
-                        baselineFont: previewFont(for: baseline, size: max(12, viewModel.previewSize * 0.82), monospacedNumerals: true),
-                        candidateFont: previewFont(for: compare, size: max(12, viewModel.previewSize * 0.82), monospacedNumerals: true),
-                        factorTitle: factorTitle,
-                        tr: viewModel.tr
-                    )
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var compareSnippetControls: some View {
-        HStack(spacing: 8) {
-            Picker(viewModel.tr(.snippetStrategy), selection: $snippetStrategy) {
-                Text(viewModel.tr(.snippetStrategySemantic)).tag(SnippetStrategy.semantic)
-                Text(viewModel.tr(.snippetStrategyNative)).tag(SnippetStrategy.native)
-            }
-            .pickerStyle(.menu)
-
-            Picker(viewModel.tr(.codeLanguage), selection: $codeLanguage) {
-                ForEach(MiniTokenizer.Language.allCases) { language in
-                    Text(codeLanguageTitle(language)).tag(language)
-                }
-            }
-            .pickerStyle(.menu)
-        }
-    }
-
-    private func factorTitle(_ factor: ProgrammingScoreFactor) -> String {
-        switch factor {
-        case .monospaceBaseline:
-            return viewModel.tr(.factorMonospaceBaseline)
-        case .glyphDisambiguation:
-            return viewModel.tr(.factorGlyphDisambiguation)
-        case .ligatureSupport:
-            return viewModel.tr(.factorLigatureSupport)
-        case .stylisticFlexibility:
-            return viewModel.tr(.factorStylisticFlexibility)
-        case .boxDrawing:
-            return viewModel.tr(.factorBoxDrawing)
-        case .powerlineGlyphs:
-            return viewModel.tr(.factorPowerlineGlyphs)
-        case .nerdFontCoverage:
-            return viewModel.tr(.factorNerdFontCoverage)
-        case .variableFont:
-            return viewModel.tr(.factorVariableFont)
-        case .languageCoverage:
-            return viewModel.tr(.factorLanguageCoverage)
-        case .weightVariety:
-            return viewModel.tr(.factorWeightVariety)
-        }
-    }
-
-    private func factorHint(_ factor: ProgrammingScoreFactor) -> String {
-        switch factor {
-        case .monospaceBaseline:
-            return viewModel.tr(.factorHintMonospaceBaseline)
-        case .glyphDisambiguation:
-            return viewModel.tr(.factorHintGlyphDisambiguation)
-        case .ligatureSupport:
-            return viewModel.tr(.factorHintLigatureSupport)
-        case .stylisticFlexibility:
-            return viewModel.tr(.factorHintStylisticFlexibility)
-        case .boxDrawing:
-            return viewModel.tr(.factorHintBoxDrawing)
-        case .powerlineGlyphs:
-            return viewModel.tr(.factorHintPowerlineGlyphs)
-        case .nerdFontCoverage:
-            return viewModel.tr(.factorHintNerdFontCoverage)
-        case .variableFont:
-            return viewModel.tr(.factorHintVariableFont)
-        case .languageCoverage:
-            return viewModel.tr(.factorHintLanguageCoverage)
-        case .weightVariety:
-            return viewModel.tr(.factorHintWeightVariety)
-        }
-    }
-
-    @ViewBuilder
-    private func whyPopover(for factor: ProgrammingScoreFactor) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(whyTitle(for: factor))
-                .font(.subheadline.weight(.semibold))
-            Text(viewModel.tr(.whyMeasurementTitle))
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(factorHint(factor))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(viewModel.tr(.whyImpactTitle))
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(whyDescription(for: factor))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(viewModel.tr(.whyExampleTitle))
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(whyExample(for: factor))
-                .font(.caption2.monospaced())
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-        }
-        .padding(12)
-        .frame(width: 300)
-    }
-
-    private func scoreBreakdownTitle() -> String {
-        viewModel.tr(.scoreBreakdownTitle)
-    }
-
-    private func shouldShowWhyNotHint(score: ProgrammingScore) -> Bool {
-        score.grade == .c || score.grade == .notRecommended
-    }
-
-    @ViewBuilder
-    private func whyNotHint(score: ProgrammingScore) -> some View {
-        let weakest = weakestContributions(from: score.breakdown, limit: 3)
-        let summary = weakest.map { item in
-            "\(factorTitle(item.factor)) \(Int(round(item.weightedValue)))/\(Int(round(item.maxWeight)))"
-        }.joined(separator: " · ")
-
-        Label(
-            whyNotTitleText() + " " + summary,
-            systemImage: "exclamationmark.triangle.fill"
-        )
-        .font(.caption)
-        .foregroundStyle(.orange)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-        HStack(spacing: 8) {
-            Button(viewModel.tr(.whyInspectFactors)) {
-                showScoreBreakdown = true
-                previewSurface = .code
-            }
-            .controlSize(.small)
-            Button(viewModel.tr(.whyCompareNow)) {
-                previewSurface = .code
-            }
-            .controlSize(.small)
-        }
-    }
-
-    private func weakestContributions(
-        from breakdown: [FactorContribution],
-        limit: Int
-    ) -> [FactorContribution] {
-        breakdown
-            .sorted { lhs, rhs in
-                let lRatio = lhs.maxWeight > 0 ? lhs.weightedValue / lhs.maxWeight : 0
-                let rRatio = rhs.maxWeight > 0 ? rhs.weightedValue / rhs.maxWeight : 0
-                if lRatio == rRatio {
-                    return lhs.weightedValue < rhs.weightedValue
-                }
-                return lRatio < rRatio
-            }
-            .prefix(limit)
-            .map { $0 }
-    }
-
-    private func whyNotTitleText() -> String {
-        viewModel.tr(.whyNotRecommended)
-    }
-
-    private func compareCandidates(for baseline: FontItem) -> [FontItem] {
-        viewModel.filteredFonts.filter { item in
-            item.id != baseline.id &&
-            item.programming?.isMonospaced == true &&
-            item.programmingScore != nil
-        }
-    }
-
-    private func selectedCompareFont(from candidates: [FontItem]) -> FontItem? {
-        if let compareFontID, let found = candidates.first(where: { $0.id == compareFontID }) {
-            return found
-        }
-        return candidates.first
-    }
-
-    private func compareTitle() -> String {
-        viewModel.tr(.compareWith)
-    }
-
-    private func compareNoneOption() -> String {
-        viewModel.tr(.compareNone)
-    }
-
     private func codeLanguageTitle(_ language: MiniTokenizer.Language) -> String {
         switch language {
         case .swift: return viewModel.tr(.languageSwift)
@@ -702,83 +334,6 @@ struct FontPreviewView: View {
         }
     }
 
-    private func whyButtonTitle() -> String {
-        viewModel.tr(.whyButton)
-    }
-
-    private func whyTitle(for factor: ProgrammingScoreFactor) -> String {
-        "\(factorTitle(factor)) · \(viewModel.tr(.whyItMattersSuffix))"
-    }
-
-    private func whyDescription(for factor: ProgrammingScoreFactor) -> String {
-        switch factor {
-        case .monospaceBaseline:
-            return viewModel.tr(.factorWhyMonospaceBaseline)
-        case .glyphDisambiguation:
-            return viewModel.tr(.factorWhyGlyphDisambiguation)
-        case .ligatureSupport:
-            return viewModel.tr(.factorWhyLigatureSupport)
-        case .stylisticFlexibility:
-            return viewModel.tr(.factorWhyStylisticFlexibility)
-        case .boxDrawing:
-            return viewModel.tr(.factorWhyBoxDrawing)
-        case .powerlineGlyphs:
-            return viewModel.tr(.factorWhyPowerlineGlyphs)
-        case .nerdFontCoverage:
-            return viewModel.tr(.factorWhyNerdFontCoverage)
-        case .variableFont:
-            return viewModel.tr(.factorWhyVariableFont)
-        case .languageCoverage:
-            return viewModel.tr(.factorWhyLanguageCoverage)
-        case .weightVariety:
-            return viewModel.tr(.factorWhyWeightVariety)
-        }
-    }
-
-    private func whyExample(for factor: ProgrammingScoreFactor) -> String {
-        switch factor {
-        case .monospaceBaseline: return "let x = 10\nlet longName = 20"
-        case .glyphDisambiguation: return "Il1  O0  rn/m  8B"
-        case .ligatureSupport: return "!=  >=  <=  =>  ->"
-        case .stylisticFlexibility: return "0  0̸  ss01  ss02"
-        case .boxDrawing: return "┌─┬─┐\n│ │ │\n└─┴─┘"
-        case .powerlineGlyphs: return "      "
-        case .nerdFontCoverage: return "󰈙  󰄛  󰆍  󰒓"
-        case .variableFont: return "wght: 400 -> 550"
-        case .languageCoverage: return "Hello 你好 Привет"
-        case .weightVariety: return "Thin Regular Medium Bold"
-        }
-    }
-
-    private func gradeBadge(_ grade: ProgrammingGrade) -> some View {
-        Text(gradeText(grade))
-        .font(.caption2.weight(.bold))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(.quaternary, in: Capsule())
-        .accessibilityLabel(viewModel.tr(gradeL10nKey(grade)))
-    }
-
-    private func gradeText(_ grade: ProgrammingGrade) -> String {
-        switch grade {
-        case .s: return "S"
-        case .a: return "A"
-        case .b: return "B"
-        case .c: return "C"
-        case .notRecommended: return "NR"
-        }
-    }
-
-    private func gradeL10nKey(_ grade: ProgrammingGrade) -> L10nKey {
-        switch grade {
-        case .s: return .gradeS
-        case .a: return .gradeA
-        case .b: return .gradeB
-        case .c: return .gradeC
-        case .notRecommended: return .gradeNotRecommended
-        }
-    }
-
     @ViewBuilder
     private func previewBlocksSection(for selected: FontItem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -790,7 +345,7 @@ struct FontPreviewView: View {
 
     @ViewBuilder
     private func previewBlock(text: String, size: Double, item: FontItem) -> some View {
-        let prepared = preparedPreviewText(text)
+        let prepared = FontPreviewTextRendering.prepare(text)
         if useSingleLinePreview {
             VStack(alignment: .leading, spacing: 4) {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -957,61 +512,18 @@ struct FontPreviewView: View {
         return (try? AttributedString(NSAttributedString(attributedString: mutable), including: \.appKit)) ?? AttributedString(text)
     }
 
-    private struct PreparedPreviewText {
-        let renderText: String
-        let didTruncate: Bool
-        let originalCount: Int
-    }
-
-    private func preparedPreviewText(_ text: String) -> PreparedPreviewText {
-        let originalCount = text.count
-        let base: String
-        let didTruncate: Bool
-        if originalCount > previewTextLengthLimit {
-            let cutoff = text.index(text.startIndex, offsetBy: previewTextLengthLimit)
-            base = String(text[..<cutoff]) + "…"
-            didTruncate = true
-        } else {
-            base = text
-            didTruncate = false
-        }
-
-        let rendered: String
-        if base.count > softWrapCharacterLimit {
-            rendered = base
-        } else {
-            rendered = softWrappedText(base)
-        }
-        return PreparedPreviewText(
-            renderText: rendered,
-            didTruncate: didTruncate,
-            originalCount: originalCount
-        )
-    }
-
     @ViewBuilder
     private func previewTruncationHint(originalCount: Int) -> some View {
         Label(
-            String(format: viewModel.tr(.previewTruncatedInfo), previewTextLengthLimit, originalCount),
+            String(
+                format: viewModel.tr(.previewTruncatedInfo),
+                FontPreviewTextRendering.previewTextLengthLimit,
+                originalCount
+            ),
             systemImage: "scissors"
         )
         .font(.caption2)
         .foregroundStyle(.secondary)
-    }
-
-    private func softWrappedText(_ text: String) -> String {
-        var result = String()
-        result.reserveCapacity(text.count * 4)
-        var first = true
-        for character in text {
-            if first {
-                first = false
-            } else {
-                result.append("\u{200B}")
-            }
-            result.append(character)
-        }
-        return result
     }
 
     private func previewFont(for item: FontItem, size: Double, monospacedNumerals: Bool) -> Font {
@@ -1111,18 +623,14 @@ struct FontPreviewView: View {
     }
 
     private func resolveFontURL(postScriptName: String) -> URL? {
-        guard let urls = CTFontManagerCopyAvailableFontURLs() as? [URL] else {
-            return nil
-        }
-        return urls.first { url in
-            url.deletingPathExtension().lastPathComponent == postScriptName
-        }
+        FontURLResolver.url(forPostScriptName: postScriptName)
     }
 
     private func performActivation(_ operation: @escaping () throws -> Void) {
         Task { @MainActor in
             do {
                 try operation()
+                viewModel.refreshManagedFontState()
                 activationMessage = viewModel.tr(.activationDone)
                 activationConflictPath = nil
             } catch let FontActivationError.installConflict(destination) {

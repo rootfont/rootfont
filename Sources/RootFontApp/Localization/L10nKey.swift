@@ -57,6 +57,13 @@ enum L10nKey {
     case jumpRecents
     case clearFilters
     case loadingFonts
+    case loadingFontsEnriching
+    case previewPresetMixed
+    case previewPresetEnglish
+    case previewPresetChinese
+    case previewPresetJapanese
+    case previewPresetKorean
+    case previewPresetNumeric
     case loadFailed
     case noMatchingFonts
     case tryClearFilters

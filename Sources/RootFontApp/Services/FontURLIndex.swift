@@ -1,0 +1,60 @@
+import CoreText
+import Foundation
+
+/// Shared cache of `CTFontManagerCopyAvailableFontURLs` results.
+final class FontURLIndex: @unchecked Sendable {
+    static let shared = FontURLIndex()
+
+    private let lock = NSLock()
+    private var cachedURLs: [URL]?
+    private var cachedURLByPostScriptName: [String: URL]?
+
+    private init() {}
+
+    var urls: [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cachedURLs {
+            return cachedURLs
+        }
+        let urls = (CTFontManagerCopyAvailableFontURLs() as? [URL]) ?? []
+        cachedURLs = urls
+        cachedURLByPostScriptName = Self.buildIndex(from: urls)
+        return urls
+    }
+
+    func url(forPostScriptName postScriptName: String) -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        if cachedURLByPostScriptName == nil {
+            let urls = (CTFontManagerCopyAvailableFontURLs() as? [URL]) ?? []
+            cachedURLs = urls
+            cachedURLByPostScriptName = Self.buildIndex(from: urls)
+        }
+        return cachedURLByPostScriptName?[postScriptName]
+    }
+
+    func invalidate() {
+        lock.lock()
+        cachedURLs = nil
+        cachedURLByPostScriptName = nil
+        lock.unlock()
+    }
+
+    private static func buildIndex(from urls: [URL]) -> [String: URL] {
+        var index: [String: URL] = [:]
+        index.reserveCapacity(urls.count)
+        for url in urls {
+            let postScriptName = url.deletingPathExtension().lastPathComponent
+            guard !postScriptName.isEmpty else { continue }
+            index[postScriptName] = url
+        }
+        return index
+    }
+}
+
+enum FontURLResolver {
+    static func url(forPostScriptName postScriptName: String) -> URL? {
+        FontURLIndex.shared.url(forPostScriptName: postScriptName)
+    }
+}

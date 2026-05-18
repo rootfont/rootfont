@@ -32,10 +32,24 @@ struct FontListView: View {
             headerView
 
             VStack(spacing: 0) {
-                if viewModel.isLoading {
+                if viewModel.isLoading && viewModel.filteredFonts.isEmpty {
                     Spacer()
-                    ProgressView(viewModel.tr(.loadingFonts))
-                        .controlSize(.small)
+                    VStack(spacing: 10) {
+                        if let progress = viewModel.loadProgress {
+                            ProgressView(value: progress) {
+                                Text(
+                                    progress < 0.5
+                                        ? viewModel.tr(.loadingFonts)
+                                        : viewModel.tr(.loadingFontsEnriching)
+                                )
+                            }
+                            .progressViewStyle(.linear)
+                        } else {
+                            ProgressView(viewModel.tr(.loadingFonts))
+                        }
+                    }
+                    .controlSize(.small)
+                    .frame(maxWidth: 280)
                     Spacer()
                 } else if let errorMessage = viewModel.loadErrorMessage {
                     ContentUnavailableView(
@@ -193,6 +207,8 @@ struct FontListView: View {
                     .frame(minWidth: 260, idealWidth: 360, maxWidth: 480)
                     .controlSize(.regular)
                     .focused($isSearchFieldFocused)
+                    .accessibilityLabel(viewModel.tr(.searchPlaceholder))
+                    .accessibilityIdentifier("fontSearchField")
 
                 Picker(viewModel.tr(.source), selection: Binding(
                     get: { viewModel.selectedSource },
@@ -208,6 +224,7 @@ struct FontListView: View {
                 .controlSize(.regular)
                 .frame(minWidth: pickerMinWidth)
                 .fixedSize()
+                .accessibilityLabel(viewModel.tr(.source))
 
                 Picker(viewModel.tr(.style), selection: Binding(
                     get: { viewModel.selectedStyle },
@@ -225,6 +242,7 @@ struct FontListView: View {
                 .controlSize(.regular)
                 .frame(minWidth: pickerMinWidth)
                 .fixedSize()
+                .accessibilityLabel(viewModel.tr(.style))
 
                 Picker(viewModel.tr(.sort), selection: Binding(
                     get: { viewModel.sortOption },
@@ -239,6 +257,7 @@ struct FontListView: View {
                 .controlSize(.regular)
                 .frame(minWidth: sortPickerMinWidth)
                 .fixedSize()
+                .accessibilityLabel(viewModel.tr(.sort))
 
                 HStack(spacing: 6) {
                     Text(viewModel.tr(.display))
@@ -253,6 +272,7 @@ struct FontListView: View {
                     .pickerStyle(.segmented)
                     .controlSize(.regular)
                     .frame(width: segmentedDisplayWidth)
+                    .accessibilityLabel(viewModel.tr(.display))
                 }
                 .fixedSize()
 

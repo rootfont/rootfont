@@ -3,7 +3,16 @@ import CoreText
 import Foundation
 
 protocol FontCatalogServiceProtocol: Sendable {
-    func loadFonts() throws -> [FontItem]
+    func loadFonts(
+        onPartial: (@Sendable ([FontItem]) -> Void)?,
+        reportProgress: (@Sendable (Double) -> Void)?
+    ) throws -> [FontItem]
+}
+
+extension FontCatalogServiceProtocol {
+    func loadFonts() throws -> [FontItem] {
+        try loadFonts(onPartial: nil, reportProgress: nil)
+    }
 }
 
 struct FontCatalogService: FontCatalogServiceProtocol {
@@ -16,47 +25,51 @@ struct FontCatalogService: FontCatalogServiceProtocol {
     private let metricsProbe: FontMetricsProbeProtocol
     private let scoreEngine: ProgrammingScoreEngine
     private let scoreManifestStore: ScoreManifestStoreProtocol
+    private let fontURLIndex: FontURLIndex
 
     init(
         styleResolver: FontStyleResolverProtocol = FontStyleResolver(),
         featureInspector: FontFeatureInspectorProtocol = FontFeatureInspector(),
         metricsProbe: FontMetricsProbeProtocol = FontMetricsProbe(),
         scoreEngine: ProgrammingScoreEngine = ProgrammingScoreEngine(),
-        scoreManifestStore: ScoreManifestStoreProtocol = ScoreManifestStore()
+        scoreManifestStore: ScoreManifestStoreProtocol = ScoreManifestStore(),
+        fontURLIndex: FontURLIndex = .shared
     ) {
         self.styleResolver = styleResolver
         self.featureInspector = featureInspector
         self.metricsProbe = metricsProbe
         self.scoreEngine = scoreEngine
         self.scoreManifestStore = scoreManifestStore
+        self.fontURLIndex = fontURLIndex
     }
 
-    func loadFonts() throws -> [FontItem] {
-        guard let descriptors = CTFontManagerCopyAvailableFontURLs() as? [URL] else {
-            throw CatalogError.unableToReadFontCatalog
-        }
+    func loadFonts(
+        onPartial: (@Sendable ([FontItem]) -> Void)?,
+        reportProgress: (@Sendable (Double) -> Void)?
+    ) throws -> [FontItem] {
+        let descriptors = fontURLIndex.urls
 
         var seen = Set<String>()
         var items: [FontItem] = []
+        var urlByPostScriptName: [String: URL] = [:]
+        var pendingEnrichmentIndices: [Int] = []
         let cachedEntries = scoreManifestStore.load()
         var nextCache: [String: CachedScoreEntry] = [:]
+        items.reserveCapacity(descriptors.count)
+        urlByPostScriptName.reserveCapacity(descriptors.count)
 
         for url in descriptors {
             let postScriptName = url.deletingPathExtension().lastPathComponent
             guard !postScriptName.isEmpty else { continue }
             guard !seen.contains(postScriptName) else { continue }
             seen.insert(postScriptName)
+            urlByPostScriptName[postScriptName] = url
 
             let nsFont = NSFont(name: postScriptName, size: 16) ?? NSFont.systemFont(ofSize: 16)
             let source: FontSource = url.path.contains("/System/Library/Fonts") ? .system : .user
             let styles = styleResolver.resolveStyleTags(for: nsFont)
             let cacheKey = scoreManifestStore.cacheKey(for: postScriptName, fileURL: url)
             let cached = cachedEntries[cacheKey]
-            let programmingProfile = cached?.programming ?? featureInspector.inspect(postScriptName: postScriptName)
-            let metrics = cached?.metrics ?? metricsProbe.measure(
-                postScriptName: postScriptName,
-                isMonospaced: programmingProfile.isMonospaced
-            )
 
             let ctFont = CTFontCreateWithName(postScriptName as CFString, 16, nil)
             let defaultFamily = nsFont.familyName ?? postScriptName
@@ -64,27 +77,66 @@ struct FontCatalogService: FontCatalogServiceProtocol {
             let localizedFamily = nativeLocalizedName(for: ctFont, nameID: kCTFontFamilyNameKey, fallback: defaultFamily)
             let localizedDisplay = nativeLocalizedName(for: ctFont, nameID: kCTFontFullNameKey, fallback: defaultDisplay)
 
-            items.append(
-                FontItem(
-                    id: postScriptName,
-                    familyName: defaultFamily,
-                    postScriptName: postScriptName,
-                    displayName: defaultDisplay,
-                    source: source,
-                    styleTags: styles,
-                    localizedFamilyNames: localizedFamily,
-                    localizedDisplayNames: localizedDisplay,
-                    programming: programmingProfile,
-                    metrics: metrics,
-                    programmingScore: cached?.score
+            if let cached {
+                items.append(
+                    FontItem(
+                        id: postScriptName,
+                        familyName: defaultFamily,
+                        postScriptName: postScriptName,
+                        displayName: defaultDisplay,
+                        source: source,
+                        styleTags: styles,
+                        localizedFamilyNames: localizedFamily,
+                        localizedDisplayNames: localizedDisplay,
+                        programming: cached.programming,
+                        metrics: cached.metrics,
+                        programmingScore: cached.score
+                    )
                 )
-            )
+            } else {
+                pendingEnrichmentIndices.append(items.count)
+                items.append(
+                    FontItem(
+                        id: postScriptName,
+                        familyName: defaultFamily,
+                        postScriptName: postScriptName,
+                        displayName: defaultDisplay,
+                        source: source,
+                        styleTags: styles,
+                        localizedFamilyNames: localizedFamily,
+                        localizedDisplayNames: localizedDisplay
+                    )
+                )
+            }
+        }
+
+        let partialScored = Self.attachProgrammingScores(items, scoreEngine: scoreEngine)
+        let partialSorted = partialScored.sorted { lhs, rhs in
+            lhs.familyName.localizedCaseInsensitiveCompare(rhs.familyName) == .orderedAscending
+        }
+        onPartial?(partialSorted)
+        reportProgress?(pendingEnrichmentIndices.isEmpty ? 1.0 : 0.35)
+
+        if !pendingEnrichmentIndices.isEmpty {
+            let total = pendingEnrichmentIndices.count
+            for (done, index) in pendingEnrichmentIndices.enumerated() {
+                var item = items[index]
+                let postScriptName = item.postScriptName
+                let programmingProfile = featureInspector.inspect(postScriptName: postScriptName)
+                let metrics = metricsProbe.measure(
+                    postScriptName: postScriptName,
+                    isMonospaced: programmingProfile.isMonospaced
+                )
+                item.programming = programmingProfile
+                item.metrics = metrics
+                items[index] = item
+                reportProgress?(0.35 + 0.55 * (Double(done + 1) / Double(total)))
+            }
         }
 
         let scoredItems = Self.attachProgrammingScores(items, scoreEngine: scoreEngine)
         for item in scoredItems {
-            let url = descriptors.first { $0.deletingPathExtension().lastPathComponent == item.postScriptName }
-            if let url {
+            if let url = urlByPostScriptName[item.postScriptName] {
                 let key = scoreManifestStore.cacheKey(for: item.postScriptName, fileURL: url)
                 nextCache[key] = CachedScoreEntry(
                     programming: item.programming,
@@ -94,6 +146,7 @@ struct FontCatalogService: FontCatalogServiceProtocol {
             }
         }
         scoreManifestStore.save(nextCache)
+        reportProgress?(1.0)
         return scoredItems.sorted { lhs, rhs in
             lhs.familyName.localizedCaseInsensitiveCompare(rhs.familyName) == .orderedAscending
         }
