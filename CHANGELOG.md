@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0-alpha] - 2026-06-16
+
+### Added
+- Programming workspace module with Library / Programming sidebar switch;
+  Programming mode scopes to monospaced fonts and defaults sort to
+  programming fit.
+- Sidebar filters: Recommended for code, Avoid for code, and Managed by
+  RootFont.
+- Programming suitability scoring (`ProgrammingScoreEngine`) with S / A /
+  B / C / NR grades across ten weighted factors: monospace baseline,
+  glyph disambiguation, ligature support, stylistic flexibility, box
+  drawing, Powerline glyphs, Nerd Font coverage, variable font, language
+  coverage, and weight variety.
+- `FontFeatureInspector` and `FontMetricsProbe` for OpenType feature
+  detection, confusable-pair distances, and ASCII advance variance.
+- `ScoreManifestStore` persists profiles, metrics, and scores to
+  `~/Library/Application Support/RootFont/scores.json`, keyed by file
+  modification time for automatic invalidation.
+- Score breakdown UI with per-factor progress bars, grade badges, Why
+  popovers, and low-grade improvement hints.
+- Configurable score weights in Settings: Default, Terminal Heavy, IDE
+  Heavy, and Minimalist presets plus ten independent sliders (0–40).
+- `FontCompareView` with side-by-side, overlay (opacity + visibility),
+  glyph zoom, and outline-diff modes; score delta, factor deltas, and
+  language-coverage diff.
+- Sample / Code preview surface toggle with `MiniTokenizer` syntax
+  highlighting for twelve languages and `SnippetCatalog` semantic /
+  native snippet strategies.
+- `OpenTypeFeatureBinder` for live ligature, slashed-zero, and stylistic-
+  set preview; per-font `FontFeaturePreferences` persistence.
+- `FontActivationService`: session activate, user-scope install to
+  `~/Library/Fonts/RootFont/`, uninstall, startup reconcile, and managed-
+  font sidebar filter.
+- `EditorConfigExporter` one-click snippets for VS Code, Cursor,
+  Alacritty, Kitty, Warp, and Zed.
+- Preview header actions: copy PostScript name, copy editor config, open
+  in Font Book, activate / install / uninstall, open managed-fonts folder.
+- Staged catalog loading with two-phase progress UI and partial results
+  before enrichment finishes.
+- `FontURLIndex` shared cache for `CTFontManagerCopyAvailableFontURLs`.
+- Programming grade badges on grid cards.
+- GitHub Actions CI on `macos-14`: `swift build`, `swift test`,
+  `check-l10n.py`, `check-version.py`.
+- Screenshots for v0.3.0-alpha (dark and light main window).
+- Test suites for scoring, activation, compare, snippets, metrics, and
+  filter performance (~80 cases across 16 files).
+
+### Changed
+- `FontPreviewView` split into `FontPreviewHeaderSection`,
+  `FontPreviewProgrammingPanel`, `FontPreviewFactorLabels`,
+  `FontPreviewTextRendering`, and `FontPreviewTypes`.
+- `FontCatalogService` integrates staged load, score cache read/write,
+  and enrichment progress reporting.
+- `FontBrowserViewModel` extended with workspace module, score weights,
+  managed-font state, and load-progress publishing.
+- `FontFilterEngine` supports programming-fit sort, recommended/avoid
+  filters, and managed-font filtering.
+- Expanded sidebar and font-list row hit targets and vertical padding for
+  more reliable selection.
+- README updated for v0.3.0-alpha with What's New, features, and new
+  screenshot paths.
+
+### Removed
+- Legacy `Sources/FontManager.swift` singleton (superseded by
+  `FontCatalogService` + `FontURLIndex`).
+
+### Localization
+- ~155 new `L10nKey` entries for programming workspace, scoring,
+  compare, activation, editor export, and code preview across all five
+  locales (`en`, `zh-Hans`, `zh-Hant`, `ja`, `ko`).
+
 ## [0.2.0-beta] - 2026-04-23
 
 ### Added
