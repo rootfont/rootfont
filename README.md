@@ -77,8 +77,38 @@ RootFont v0.3.0-alpha is the programming-font release on top of v0.2.0-beta. Thi
 
 ### Requirements
 
-- macOS 14+
-- Xcode 15+ (Swift toolchain included)
+- **macOS 14+** (Apple Silicon or Intel)
+- **Xcode 15+** with the macOS SDK — the full app from the App Store or
+  [developer.apple.com/xcode](https://developer.apple.com/xcode/)
+- **Swift 6.0+** (`Package.swift` uses `swift-tools-version: 6.0`). Swift
+  **6.2+** is recommended; newer toolchains apply stricter Swift
+  concurrency checks (see [issue #56](https://github.com/rootfont/rootfont/issues/56)).
+
+RootFont is a **macOS-only** SwiftPM project. Building, running, and testing
+on Linux or with Command Line Tools alone is **not supported**.
+
+### Toolchain setup
+
+Use the **Xcode** toolchain, not standalone Command Line Tools:
+
+```bash
+xcode-select -p
+# Expected: /Applications/Xcode.app/Contents/Developer
+
+# If you see /Library/Developer/CommandLineTools instead:
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+```
+
+Verify Swift and XCTest:
+
+```bash
+swift --version
+xcrun swift -e 'import XCTest; print("XCTest OK")'
+```
+
+`swift test` requires **XCTest** from Xcode. If you see
+`no such module 'XCTest'`, switch `xcode-select` as above and open Xcode
+once to finish component installation.
 
 ### Run
 
