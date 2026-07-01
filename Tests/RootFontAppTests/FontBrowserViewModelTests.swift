@@ -3,10 +3,14 @@ import XCTest
 
 @MainActor
 final class FontBrowserViewModelTests: XCTestCase {
-    private func waitForLoad(_ viewModel: FontBrowserViewModel, timeout: TimeInterval = 1.0) {
+    private func waitForLoad(_ viewModel: FontBrowserViewModel, timeout: TimeInterval = 2.0) async {
         let deadline = Date().addingTimeInterval(timeout)
         while viewModel.isLoading && Date() < deadline {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        if viewModel.isLoading {
+            XCTFail("Timed out waiting for font catalog load")
         }
     }
 
@@ -168,7 +172,7 @@ final class FontBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(store.appearanceMode, .dark)
     }
 
-    func testSystemAliasFontsCollapsedByDefault() {
+    func testSystemAliasFontsCollapsedByDefault() async {
         let fonts = [
             FontItem(
                 id: "a",
@@ -196,7 +200,7 @@ final class FontBrowserViewModelTests: XCTestCase {
         )
 
         viewModel.load()
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
 
         XCTAssertEqual(viewModel.filteredFonts.count, 2)
         XCTAssertTrue(viewModel.filteredFonts.contains(where: { $0.id == "c" }))
@@ -216,7 +220,7 @@ final class FontBrowserViewModelTests: XCTestCase {
         XCTAssertTrue(store.showSystemAliasFonts)
     }
 
-    func testLoadFailureSetsErrorState() {
+    func testLoadFailureSetsErrorState() async {
         enum TestError: Error { case failed }
         let viewModel = FontBrowserViewModel(
             catalogService: MockCatalogService(fonts: [], error: TestError.failed),
@@ -224,14 +228,14 @@ final class FontBrowserViewModelTests: XCTestCase {
         )
 
         viewModel.load()
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
 
         XCTAssertNotNil(viewModel.loadErrorMessage)
         XCTAssertTrue(viewModel.filteredFonts.isEmpty)
         XCTAssertFalse(viewModel.isLoading)
     }
 
-    func testFiltersBySearchKeyword() {
+    func testFiltersBySearchKeyword() async {
         let fonts = [
             FontItem.sample(id: "1", familyName: "Arial", source: .system, styleTags: [.regular]),
             FontItem.sample(id: "2", familyName: "PingFang SC", source: .system, styleTags: [.regular])
@@ -243,7 +247,7 @@ final class FontBrowserViewModelTests: XCTestCase {
 
         viewModel.load()
 
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
         viewModel.searchQuery = "ping"
         viewModel.applyFilters()
 
@@ -272,7 +276,7 @@ final class FontBrowserViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.activeFilterSummary.contains(viewModel.tr(.filterGlyphCoverage)))
     }
 
-    func testFiltersBySourceAndStyle() {
+    func testFiltersBySourceAndStyle() async {
         let fonts = [
             FontItem.sample(id: "1", familyName: "Arial", source: .system, styleTags: [.bold]),
             FontItem.sample(id: "2", familyName: "CustomSans", source: .user, styleTags: [.bold]),
@@ -285,7 +289,7 @@ final class FontBrowserViewModelTests: XCTestCase {
 
         viewModel.load()
 
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
         viewModel.selectedSource = .user
         viewModel.selectedStyle = .bold
         viewModel.applyFilters()
@@ -294,7 +298,7 @@ final class FontBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.filteredFonts.first?.id, "2")
     }
 
-    func testProgrammingModuleShowsOnlyMonospacedProgrammingCandidates() {
+    func testProgrammingModuleShowsOnlyMonospacedProgrammingCandidates() async {
         let coding = FontItem(
             id: "mono",
             familyName: "Mono",
@@ -319,14 +323,14 @@ final class FontBrowserViewModelTests: XCTestCase {
         )
 
         viewModel.load()
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
         viewModel.updateWorkspaceModule(.programming)
         viewModel.updateSidebarFilter(.all)
 
         XCTAssertEqual(viewModel.filteredFonts.map(\.id), ["mono"])
     }
 
-    func testProgrammingModuleDefaultsToRecommendedAndProgrammingSort() {
+    func testProgrammingModuleDefaultsToRecommendedAndProgrammingSort() async {
         let coding = FontItem.sample(
             id: "mono",
             familyName: "Mono",
@@ -339,14 +343,14 @@ final class FontBrowserViewModelTests: XCTestCase {
         )
 
         viewModel.load()
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
         viewModel.updateWorkspaceModule(.programming)
 
         XCTAssertEqual(viewModel.sidebarFilter, .recommendedForCode)
         XCTAssertEqual(viewModel.sortOption, .programmingFit)
     }
 
-    func testRecommendedForCodeFilterUsesProgrammingSignals() {
+    func testRecommendedForCodeFilterUsesProgrammingSignals() async {
         let recommended = FontItem(
             id: "recommended",
             familyName: "Recommended",
@@ -383,7 +387,7 @@ final class FontBrowserViewModelTests: XCTestCase {
         )
 
         viewModel.load()
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
         viewModel.updateWorkspaceModule(.programming)
         viewModel.updateSidebarFilter(.recommendedForCode)
         XCTAssertEqual(viewModel.filteredFonts.map(\.id), ["recommended"])
@@ -392,7 +396,7 @@ final class FontBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.filteredFonts.map(\.id), ["avoid"])
     }
 
-    func testFavoriteTogglePersistsState() {
+    func testFavoriteTogglePersistsState() async {
         let item = FontItem.sample(id: "1", familyName: "Arial", source: .system, styleTags: [.regular])
         let store = InMemoryPreferencesStore()
         let viewModel = FontBrowserViewModel(
@@ -402,14 +406,14 @@ final class FontBrowserViewModelTests: XCTestCase {
 
         viewModel.load()
 
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
         viewModel.toggleFavorite(item)
 
         XCTAssertTrue(viewModel.favoriteIDs.contains(item.id))
         XCTAssertTrue(store.favoriteIDs.contains(item.id))
     }
 
-    func testSelectingFontAddsToRecentsWithoutDuplicates() {
+    func testSelectingFontAddsToRecentsWithoutDuplicates() async {
         let first = FontItem.sample(id: "1", familyName: "Arial", source: .system, styleTags: [.regular])
         let second = FontItem.sample(id: "2", familyName: "Avenir", source: .system, styleTags: [.regular])
         let viewModel = FontBrowserViewModel(
@@ -419,7 +423,7 @@ final class FontBrowserViewModelTests: XCTestCase {
 
         viewModel.load()
 
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
         viewModel.selectFont(first)
         viewModel.selectFont(second)
         viewModel.selectFont(first)
@@ -427,7 +431,7 @@ final class FontBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.recentFontIDs, ["1", "2"])
     }
 
-    func testRecentsFilterUsesRecencyOrder() {
+    func testRecentsFilterUsesRecencyOrder() async {
         let first = FontItem.sample(id: "1", familyName: "Arial", source: .system, styleTags: [.regular])
         let second = FontItem.sample(id: "2", familyName: "Avenir", source: .system, styleTags: [.regular])
         let third = FontItem.sample(id: "3", familyName: "Helvetica", source: .system, styleTags: [.regular])
@@ -438,7 +442,7 @@ final class FontBrowserViewModelTests: XCTestCase {
 
         viewModel.load()
 
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
         viewModel.selectFont(second)
         viewModel.selectFont(first)
         viewModel.selectFont(third)
@@ -448,7 +452,7 @@ final class FontBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.filteredFonts.map(\.id), ["3", "1", "2"])
     }
 
-    func testSortByDisplayName() {
+    func testSortByDisplayName() async {
         let zebra = FontItem(
             id: "1",
             familyName: "Family B",
@@ -472,14 +476,14 @@ final class FontBrowserViewModelTests: XCTestCase {
 
         viewModel.load()
 
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
         viewModel.sortOption = .displayName
         viewModel.applyFilters()
 
         XCTAssertEqual(viewModel.filteredFonts.map(\.displayName), ["Alpha", "Zebra"])
     }
 
-    func testClearAllFiltersResetsState() {
+    func testClearAllFiltersResetsState() async {
         let first = FontItem.sample(id: "1", familyName: "Arial", source: .system, styleTags: [.regular])
         let viewModel = FontBrowserViewModel(
             catalogService: MockCatalogService(fonts: [first]),
@@ -488,7 +492,7 @@ final class FontBrowserViewModelTests: XCTestCase {
 
         viewModel.load()
 
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
         viewModel.searchQuery = "a"
         viewModel.selectedSource = .user
         viewModel.selectedStyle = .bold
@@ -503,7 +507,7 @@ final class FontBrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.sortOption, .familyName)
     }
 
-    func testApplyPreviewPresetUpdatesPreviewText() {
+    func testApplyPreviewPresetUpdatesPreviewText() async {
         let first = FontItem.sample(id: "1", familyName: "Arial", source: .system, styleTags: [.regular])
         let store = InMemoryPreferencesStore()
         let viewModel = FontBrowserViewModel(
@@ -513,7 +517,7 @@ final class FontBrowserViewModelTests: XCTestCase {
 
         viewModel.load()
 
-        waitForLoad(viewModel)
+        await waitForLoad(viewModel)
         viewModel.applyPreviewPreset(.numeric)
 
         XCTAssertEqual(viewModel.previewText, FontBrowserViewModel.PreviewPreset.numeric.text)
