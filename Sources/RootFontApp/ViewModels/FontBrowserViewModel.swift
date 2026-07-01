@@ -309,31 +309,36 @@ final class FontBrowserViewModel: ObservableObject {
         loadProgress = 0
         loadErrorMessage = nil
         let catalogService = self.catalogService
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let loadedFonts: [FontItem]?
-            let loadFailed: Bool
-            do {
-                loadedFonts = try catalogService.loadFonts(
-                    onPartial: { partial in
-                        Task { @MainActor in
-                            self?.applyPartialLoadResult(fonts: partial)
-                        }
-                    },
-                    reportProgress: { progress in
-                        Task { @MainActor in
-                            self?.loadProgress = progress
-                        }
-                    }
-                )
-                loadFailed = false
-            } catch {
-                loadedFonts = nil
-                loadFailed = true
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            // Build @Sendable callbacks on the main actor so detached work never
+            // captures `self` directly (Swift 6.2 SendingRisksDataRace).
+            let onPartial: @Sendable ([FontItem]) -> Void = { [weak self] partial in
+                Task { @MainActor in
+                    self?.applyPartialLoadResult(fonts: partial)
+                }
+            }
+            let reportProgress: @Sendable (Double) -> Void = { [weak self] progress in
+                Task { @MainActor in
+                    self?.loadProgress = progress
+                }
             }
 
-            await MainActor.run {
-                self?.applyLoadResult(fonts: loadedFonts, failed: loadFailed)
-            }
+            let outcome: (fonts: [FontItem]?, failed: Bool) = await Task.detached(priority: .userInitiated) {
+                do {
+                    let fonts = try catalogService.loadFonts(
+                        onPartial: onPartial,
+                        reportProgress: reportProgress
+                    )
+                    return (fonts, false)
+                } catch {
+                    return (nil, true)
+                }
+            }.value
+
+            self.applyLoadResult(fonts: outcome.fonts, failed: outcome.failed)
         }
     }
 
@@ -538,7 +543,9 @@ final class FontBrowserViewModel: ObservableObject {
         let favoriteSnapshot = favoriteIDs
         let recentSnapshot = recentFontIDs
 
-        activeFilterTask = Task { [weak self] in
+        activeFilterTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
             let computed = await Task.detached(priority: .userInitiated) {
                 FontFilterEngine.compute(
                     fonts: fontsSnapshot,
@@ -550,11 +557,8 @@ final class FontBrowserViewModel: ObservableObject {
             }.value
 
             guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self else { return }
-                guard self.currentFilterSignature() == signature else { return }
-                self.commitFilterResult(computed, signature: signature, fromCache: false)
-            }
+            guard self.currentFilterSignature() == signature else { return }
+            self.commitFilterResult(computed, signature: signature, fromCache: false)
         }
     }
 
